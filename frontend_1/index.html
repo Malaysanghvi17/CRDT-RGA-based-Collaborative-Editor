@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collab Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+</head>
+
+<body>
+  <!-- ── Navbar ─────────────────────────────────────── -->
+  <nav id="navbar">
+    <div class="nav-brand">CRDT Collab Editor</div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" data-tab="editor">Editor</button>
+      <button class="nav-tab" data-tab="about">About</button>
+    </div>
+  </nav>
+
+  <!-- ── Editor Page ────────────────────────────────── -->
+  <div id="page-editor" class="page active">
+    <!-- Mobile sidebar toggle -->
+    <button id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
+    <!-- Backdrop for mobile sidebar -->
+    <div id="sidebar-backdrop"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h2>Documents</h2>
+        <button id="new-doc-btn" title="New document">+</button>
+      </div>
+      <ul id="doc-list"></ul>
+    </aside>
+
+    <!-- Editor pane -->
+    <main id="editor-pane">
+      <header id="editor-header">
+        <div class="header-left">
+          <span id="doc-title">Untitled</span>
+          <span id="connection-status" class="status disconnected">
+            <span class="status-dot"></span>
+            <span class="status-text">Disconnected</span>
+          </span>
+        </div>
+        <div class="header-right">
+          <button id="save-btn">Save</button>
+        </div>
+      </header>
+      <div id="editor-container">
+        <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+          placeholder="Start typing..."></textarea>
+        <div id="cursor-overlay"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── About Page ─────────────────────────────────── -->
+  <div id="page-about" class="page">
+    <div id="about-content" class="about-content">
+      <p>Loading...</p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>
