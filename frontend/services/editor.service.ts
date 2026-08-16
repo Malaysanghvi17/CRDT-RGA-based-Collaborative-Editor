@@ -1,6 +1,7 @@
 import { CRDT } from "./crdt.service";
 import { WebSocketService } from "./websocket.service";
 import { type SharedCursorPosition } from "../utils/cursor.utils";
+import type { CRDTNode } from "../models/crdt.models";
 
 export interface EditorOperation {
     type:
@@ -113,6 +114,10 @@ export class EditorService {
     }
 
     // ── Server message handler ────────────────────────────────────────────────
+    // New state
+    private pendingRemoteDuringComposition: boolean = false;
+    private compositionStartAnchor: any = null;
+    private compositionStartText: string = "";
 
     private handleServerMessage(data: string) {
         let msg: any;
@@ -157,6 +162,13 @@ export class EditorService {
                     this.lastSeq = seq;
                 }
 
+                if (this._isComposing) {
+                    // Merge into CRDT (done above) but DO NOT touch the DOM —
+                    // writing .value now would cancel the IME composition and
+                    // drop the user's uncommitted characters.
+                    this.pendingRemoteDuringComposition = true;
+                    return;
+                }
                 this.reconcileToTextarea(context);
                 break;
             }
@@ -268,12 +280,87 @@ export class EditorService {
 
     // ── IME / composition ─────────────────────────────────────────────────────
 
-    compositionStart() { this._isComposing = true; }
+    compositionStart() {
+        this._isComposing = true;
+        this.pendingRemoteDuringComposition = false;
+        // Freeze what the textarea looked like right now, and anchor the
+        // caret so we can re-resolve its position even if remote ops land
+        // (and shift indices) while we're composing.
+        this.compositionStartText = this.lastSyncedText;
+        this.compositionStartAnchor = this.onBeforeDocumentUpdate?.() ?? null;
+    }
     compositionEnd() { this._isComposing = false; }
     get isComposing(): boolean { return this._isComposing; }
 
     // ── Local input ───────────────────────────────────────────────────────────
+    handleCompositionCommit(newText: string): void {
+        const oldText = this.compositionStartText;
+        if (oldText === newText && !this.pendingRemoteDuringComposition) return;
 
+        let prefixLen = 0;
+        const minLen = Math.min(oldText.length, newText.length);
+        while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) prefixLen++;
+
+        let suffixLen = 0;
+        while (
+            suffixLen < minLen - prefixLen &&
+            oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+        ) suffixLen++;
+
+        const deleteCount = oldText.length - prefixLen - suffixLen;
+        const insertStr = newText.slice(prefixLen, newText.length - suffixLen);
+
+        // Resolve WHERE prefixLen actually is *now*, after any remote ops
+        // merged in during composition — instead of trusting the raw
+        // prefixLen, which was computed against the pre-composition text.
+        let baseIndex = prefixLen;
+        if (this.compositionStartAnchor?.startAnchor !== undefined) {
+            const resolved = this.getVisibleIndexFromAnchor(this.compositionStartAnchor.startAnchor);
+            if (resolved >= 0) baseIndex = resolved + 1;
+        }
+
+        for (let i = 0; i < deleteCount; i++) {
+            const deletedId = this.crdt.DeleteAtIndex(baseIndex);
+            if (deletedId) {
+                this.ws.send(JSON.stringify({
+                    type: "delete",
+                    targetId: { id: deletedId.id, seq: deletedId.seq },
+                    documentId: this.documentId,
+                }));
+            }
+        }
+
+        this.insertRun(baseIndex - 1, insertStr);
+
+        this.pendingRemoteDuringComposition = false;
+        this.compositionStartAnchor = null;
+        this.reconcileToTextarea(); // now safe — composition is over, DOM write is fine
+    }
+
+    private insertRun(startIndex: number, insertStr: string): void {
+        let prevNode: CRDTNode | undefined;
+
+        for (let i = 0; i < insertStr.length; i++) {
+            const node: CRDTNode | undefined = i === 0
+                ? this.crdt.InsertAfterIndex(startIndex, insertStr[i])
+                : this.crdt.InsertAfterNode(prevNode!.id, insertStr[i]);
+
+            if (!node) break; // parent vanished (e.g. concurrently deleted) — bail rather than corrupt the chain
+
+            this.ws.send(JSON.stringify({
+                type: "insert",
+                node: {
+                    id: { id: node.id.id, seq: node.id.seq },
+                    value: node.value,
+                    parent: node.parent ? { id: node.parent.id, seq: node.parent.seq } : null,
+                    is_deleted: node.is_deleted,
+                },
+                documentId: this.documentId,
+            }));
+
+            prevNode = node;
+        }
+    }
     handleTextChange(newText: string): void {
         if (this._isComposing) return;
         const oldText = this.lastSyncedText;
@@ -308,22 +395,7 @@ export class EditorService {
             }
         }
 
-        for (let i = 0; i < insertStr.length; i++) {
-            const insertAfterIdx = prefixLen - 1 + i;
-            const node = this.crdt.InsertAfterIndex(insertAfterIdx, insertStr[i]);
-            if (node) {
-                this.ws.send(JSON.stringify({
-                    type: "insert",
-                    node: {
-                        id: { id: node.id.id, seq: node.id.seq },
-                        value: node.value,
-                        parent: node.parent ? { id: node.parent.id, seq: node.parent.seq } : null,
-                        is_deleted: node.is_deleted,
-                    },
-                    documentId: this.documentId,
-                }));
-            }
-        }
+        this.insertRun(prefixLen - 1, insertStr);
 
         this.lastSyncedText = this.crdt.DocumentReconciliation();
     }

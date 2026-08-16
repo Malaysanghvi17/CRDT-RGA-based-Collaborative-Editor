@@ -18,6 +18,23 @@ export class CRDT {
         this.localSeq = 1;
     }
 
+    InsertAfterNode(parentId: CRDTID, value: string): CRDTNode | undefined {
+        const parentNode = this.idToNode.get(parentId.toString());
+        if (!parentNode) {
+            console.error(`InsertAfterNode: parent ${parentId} not found`);
+            return;
+        }
+        const NewNodeId = new CRDTID(this.UserId, this.localSeq++);
+        const NewNode = new CRDTNode(NewNodeId, value, null, parentNode.id, false);
+        this.IntegrateNode(NewNode, parentNode.id);
+        return NewNode;
+    }
+
+    getRootId(): CRDTID {
+        return this.RootCrdtId;
+    }
+
+
     InsertAfterIndex(index: number, value: string): CRDTNode | undefined {
         // 1. Find the node currently at 'index' to act as the parent
         // If index is -1, we insert after ROOT. 

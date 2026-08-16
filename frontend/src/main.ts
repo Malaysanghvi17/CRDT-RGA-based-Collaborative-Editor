@@ -7,6 +7,81 @@ import {
   type RemoteCursor,
   type SharedCursorPosition,
 } from '../utils/cursor.utils';
+import { AppTheme } from '../services/theme.service';
+
+// ── Theme ───────────────────────────────────────────────────────────────
+const appTheme = new AppTheme();
+appTheme.initTheme();
+
+// ── Line Numbers ────────────────────────────────────────────────────────────
+const editor = document.getElementById('editor') as HTMLTextAreaElement;
+const lineNumbers = document.getElementById('line-numbers')!;
+
+// Hidden mirror div — measures how many visual rows each logical line wraps to.
+// Width is set to the editor's exact inner text-column width so the browser
+// performs the same line-breaking as the textarea.
+const _mirror = document.createElement('div');
+Object.assign(_mirror.style, {
+  position:      'fixed',
+  top:           '-9999px',
+  left:          '-9999px',
+  visibility:    'hidden',
+  pointerEvents: 'none',
+  whiteSpace:    'pre-wrap',
+  overflowWrap:  'break-word',
+  wordBreak:     'break-word',
+  boxSizing:     'content-box', // width = pure text column, no padding added
+  padding:       '0',
+  margin:        '0',
+  border:        'none',
+});
+_mirror.setAttribute('aria-hidden', 'true');
+document.body.appendChild(_mirror);
+
+function updateLineNumbers(): void {
+  const s = getComputedStyle(editor);
+  const textWidth = editor.clientWidth
+    - parseFloat(s.paddingLeft)
+    - parseFloat(s.paddingRight);
+  _mirror.style.width      = textWidth + 'px';
+  _mirror.style.fontFamily = s.fontFamily;
+  _mirror.style.fontSize   = s.fontSize;
+  _mirror.style.lineHeight = s.lineHeight;
+  _mirror.style.tabSize    = s.tabSize;
+
+  const lineHeight = parseFloat(s.lineHeight); // pixel value from editor
+  const lines = editor.value.split('\n');
+
+  const padTop    = parseFloat(s.paddingTop);
+  const padBottom = parseFloat(s.paddingBottom);
+
+  // Spacer divs use inline px height — not em — so they match regardless of
+  // gutter font-size vs editor font-size differences
+  let html = `<div style="height:${padTop}px"></div>`;
+
+  for (let i = 0; i < lines.length; i++) {
+    _mirror.textContent = lines[i] || '\u200b';
+    // Use floor+epsilon: sub-pixel rendering can make a 1-row line measure
+    // as e.g. 25.6 against lineHeight 25.5 — ceil would give 2 wraps wrongly
+    const wraps = Math.max(1, Math.floor((_mirror.offsetHeight + 0.5) / lineHeight));
+    // Each row div height set in px from editor's actual lineHeight
+    html += `<div style="height:${lineHeight}px">${i + 1}</div>`;
+    for (let w = 1; w < wraps; w++) html += `<div style="height:${lineHeight}px"></div>`;
+  }
+
+  html += `<div style="height:${padBottom}px"></div>`;
+  lineNumbers.innerHTML = html;
+}
+
+editor.addEventListener('input', updateLineNumbers);
+
+editor.addEventListener('scroll', () => {
+  lineNumbers.scrollTop = editor.scrollTop;
+});
+
+new ResizeObserver(updateLineNumbers).observe(editor);
+
+updateLineNumbers();
 
 // ── Config ──────────────────────────────────────────────────────────────
 
@@ -220,6 +295,7 @@ function switchDocument(docId: string, docName: string) {
   currentDocName = docName;
   docTitle.textContent = docName;
   textarea.value = '';
+  updateLineNumbers();
 
   // Update URL without reload
   const url = new URL(window.location.href);
@@ -256,6 +332,7 @@ function initEditorService() {
     }
 
     textarea.value = text;
+    updateLineNumbers();
 
     const newStart = editorService!.getVisibleIndexFromAnchor(startAnchor) + 1;
     const newEnd = editorService!.getVisibleIndexFromAnchor(endAnchor) + 1;
@@ -365,9 +442,7 @@ textarea.addEventListener('compositionstart', () => {
 
 textarea.addEventListener('compositionend', () => {
   editorService?.compositionEnd();
-  // After composition ends, the textarea already has the final text.
-  // Diff it into the CRDT.
-  editorService?.handleTextChange(textarea.value);
+  editorService?.handleCompositionCommit(textarea.value);   // ← was handleTextChange
   broadcastCursorPosition();
 });
 
